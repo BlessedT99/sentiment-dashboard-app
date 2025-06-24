@@ -1,0 +1,45 @@
+# Node.js / npm
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Build artifacts
+# For React applications (e.g., Create React App default build folder)
+build/
+dist/
+
+# Logs
+*.log
+
+# Operating System files
+.DS_Store
+Thumbs.db
+
+# IDE and Editor files
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+
+# Common temporary files
+*.tmp
+*.bak
+*~
+
+# Test coverage results
+coverage/
+
+# Firebase/Cloud specific (if applicable)
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
