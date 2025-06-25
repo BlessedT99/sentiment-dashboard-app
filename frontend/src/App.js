@@ -1,66 +1,250 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area } from 'recharts';
-import { MessageSquare, TrendingUp, TrendingDown, Minus, RefreshCw, AlertCircle, Settings, Trash2, Server } from 'lucide-react';
+import { MessageSquare, TrendingUp, TrendingDown, Minus, RefreshCw, AlertCircle, Settings } from 'lucide-react';
 
 const SentimentDashboard = () => {
   const [texts, setTexts] = useState([]);
   const [inputText, setInputText] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
   const [filter, setFilter] = useState('all');
   const [error, setError] = useState('');
-  const [backendStatus, setBackendStatus] = useState('checking');
-  
-  // Backend API URL - your deployed Render backend
-  const API_BASE_URL = 'https://sentiment-dashboard-app.onrender.com/api';
-  
-  // Check backend health on component mount
-  useEffect(() => {
-    checkBackendHealth();
-    loadHistory();
-  }, []);
+  const [apiKey] = useState(process.env.REACT_APP_RAPIDAPI_KEY || '');
+  const [showApiKeyInput, setShowApiKeyInput] = useState(false);
+  const [useAPI, setUseAPI] = useState(!!process.env.REACT_APP_RAPIDAPI_KEY);
 
-  const checkBackendHealth = async () => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/health`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-      
-      if (response.ok) {
-        setBackendStatus('connected');
-      } else {
-        setBackendStatus('error');
+  // Enhanced fallback sentiment analysis with better neutral detection
+  const analyzeSentimentFallback = (text) => {
+    // Expanded word lists with intensity scores
+    const positiveWords = {
+      // Strong positive (weight: 2)
+      'amazing': 2, 'fantastic': 2, 'excellent': 2, 'outstanding': 2, 'spectacular': 2,
+      'incredible': 2, 'wonderful': 2, 'brilliant': 2, 'superb': 2, 'phenomenal': 2,
+      'marvelous': 2, 'magnificent': 2, 'exceptional': 2, 'terrific': 2, 'fabulous': 2,
+      'perfect': 2, 'awesome': 2, 'love': 2,
+      // Moderate positive (weight: 1.5)
+      'great': 1.5, 'good': 1.5, 'nice': 1.5, 'pleasant': 1.5, 'satisfied': 1.5,
+      'happy': 1.5, 'delighted': 1.5, 'impressed': 1.5, 'beautiful': 1.5, 'lovely': 1.5,
+      'enjoy': 1.5, 'helpful': 1.5, 'friendly': 1.5,
+      // Mild positive (weight: 1)
+      'like': 1, 'easy': 1, 'recommend': 1, 'decent': 1, 'fine': 1, 'pretty': 1,
+      'okay': 0.5, 'ok': 0.5, 'alright': 0.5, 'fair': 0.5
+    };
+    
+    const negativeWords = {
+      // Strong negative (weight: -2)
+      'terrible': -2, 'awful': -2, 'horrible': -2, 'disgusting': -2, 'pathetic': -2,
+      'dreadful': -2, 'appalling': -2, 'atrocious': -2, 'abysmal': -2, 'catastrophic': -2,
+      'hate': -2, 'worst': -2,
+      // Moderate negative (weight: -1.5)
+      'bad': -1.5, 'poor': -1.5, 'disappointing': -1.5, 'frustrating': -1.5, 'annoying': -1.5,
+      'useless': -1.5, 'waste': -1.5, 'broken': -1.5, 'ridiculous': -1.5, 'stupid': -1.5,
+      'overpriced': -1.5, 'boring': -1.5, 'confusing': -1.5, 'crappy': -1.5, 'garbage': -1.5,
+      // Mild negative (weight: -1)
+      'dislike': -1, 'slow': -1, 'unhelpful': -1, 'rude': -1, 'inadequate': -1, 
+      'inferior': -1, 'buggy': -1, 'irritating': -1, 'mediocre': -0.5
+    };
+    
+    // Neutral indicators - words that suggest neutrality or uncertainty
+    const neutralIndicators = [
+      'neutral', 'unsure', 'uncertain', 'maybe', 'perhaps', 'somewhat', 'kind of',
+      'sort of', 'not sure', 'undecided', 'mixed', 'average', 'moderate', 'typical',
+      'standard', 'regular', 'normal', 'usual', 'ordinary', 'so-so', 'meh',
+      'nothing special', 'not bad', 'not good', 'could be better', 'could be worse'
+    ];
+    
+    // Context modifiers
+    const negationWords = ['not', 'no', 'never', 'nothing', 'nowhere', 'neither', 'nobody', 'none', 'hardly', 'barely'];
+    const intensifiers = ['very', 'extremely', 'really', 'quite', 'pretty', 'rather', 'totally', 'completely', 'absolutely', 'definitely'];
+    const diminishers = ['slightly', 'somewhat', 'a bit', 'a little', 'kind of', 'sort of', 'rather', 'fairly'];
+    
+    // Clean and tokenize text
+    const cleanText = text.toLowerCase().replace(/[^\w\s]/g, ' ');
+    const words = cleanText.split(/\s+/).filter(word => word.length > 0);
+    
+    let totalScore = 0;
+    let wordCount = 0;
+    let neutralCount = 0;
+    let sentimentWordCount = 0;
+    
+    // Check for multi-word neutral phrases first
+    const fullText = cleanText;
+    neutralIndicators.forEach(phrase => {
+      if (fullText.includes(phrase)) {
+        neutralCount += phrase.split(' ').length;
       }
-    } catch (error) {
-      console.error('Backend health check failed:', error);
-      setBackendStatus('error');
+    });
+    
+    // Analyze each word with context
+    for (let i = 0; i < words.length; i++) {
+      const word = words[i];
+      
+      // Check for neutral indicators
+      if (neutralIndicators.includes(word)) {
+        neutralCount += 1;
+        continue;
+      }
+      
+      // Check for sentiment words
+      let wordScore = 0;
+      
+      if (positiveWords[word]) {
+        wordScore = positiveWords[word];
+        sentimentWordCount++;
+      } else if (negativeWords[word]) {
+        wordScore = negativeWords[word];
+        sentimentWordCount++;
+      } else {
+        // Check for partial matches (substring matching)
+        for (const [posWord, score] of Object.entries(positiveWords)) {
+          if (word.includes(posWord) || posWord.includes(word)) {
+            wordScore = Math.max(wordScore, score * 0.7); // Reduce score for partial matches
+            sentimentWordCount++;
+            break;
+          }
+        }
+        
+        if (wordScore === 0) {
+          for (const [negWord, score] of Object.entries(negativeWords)) {
+            if (word.includes(negWord) || negWord.includes(word)) {
+              wordScore = Math.min(wordScore, score * 0.7);
+              sentimentWordCount++;
+              break;
+            }
+          }
+        }
+      }
+      
+      if (wordScore !== 0) {
+        // Apply context modifiers
+        let modifier = 1;
+        
+        // Check for negation in the previous 2 words
+        for (let j = Math.max(0, i - 2); j < i; j++) {
+          if (negationWords.includes(words[j])) {
+            modifier *= -0.8; // Flip and reduce intensity
+            break;
+          }
+        }
+        
+        // Check for intensifiers/diminishers in the previous 2 words
+        for (let j = Math.max(0, i - 2); j < i; j++) {
+          if (intensifiers.includes(words[j])) {
+            modifier *= 1.3;
+            break;
+          } else if (diminishers.includes(words[j])) {
+            modifier *= 0.6;
+            break;
+          }
+        }
+        
+        totalScore += wordScore * modifier;
+        wordCount++;
+      }
     }
+    
+    // Calculate confidence based on various factors
+    const textLength = words.length;
+    const sentimentDensity = sentimentWordCount / Math.max(textLength, 1);
+    const neutralDensity = neutralCount / Math.max(textLength, 1);
+    
+    // Normalize score by text length (avoid bias toward longer texts)
+    const normalizedScore = wordCount > 0 ? totalScore / Math.sqrt(wordCount) : 0;
+    
+    // Enhanced thresholds based on score and context
+    const strongThreshold = 1.0;
+    const weakThreshold = 0.3;
+    
+    // Determine sentiment with improved logic
+    let sentiment, confidence;
+    
+    if (neutralCount > 0 && Math.abs(normalizedScore) < weakThreshold) {
+      // Strong neutral indicators present and weak sentiment
+      sentiment = 'neutral';
+      confidence = Math.min(0.7 + neutralDensity, 0.9);
+    } else if (Math.abs(normalizedScore) < weakThreshold) {
+      // Very weak sentiment - likely neutral
+      sentiment = 'neutral';
+      confidence = Math.max(0.5, 0.8 - Math.abs(normalizedScore));
+    } else if (normalizedScore >= strongThreshold) {
+      // Strong positive
+      sentiment = 'positive';
+      confidence = Math.min(0.6 + (normalizedScore - strongThreshold) * 0.2 + sentimentDensity, 0.95);
+    } else if (normalizedScore <= -strongThreshold) {
+      // Strong negative
+      sentiment = 'negative';
+      confidence = Math.min(0.6 + (Math.abs(normalizedScore) - strongThreshold) * 0.2 + sentimentDensity, 0.95);
+    } else if (normalizedScore > weakThreshold) {
+      // Mild positive
+      sentiment = 'positive';
+      confidence = Math.min(0.5 + normalizedScore * 0.3 + sentimentDensity, 0.85);
+    } else if (normalizedScore < -weakThreshold) {
+      // Mild negative
+      sentiment = 'negative';
+      confidence = Math.min(0.5 + Math.abs(normalizedScore) * 0.3 + sentimentDensity, 0.85);
+    } else {
+      // Default to neutral for borderline cases
+      sentiment = 'neutral';
+      confidence = 0.6;
+    }
+    
+    // Adjust confidence based on text characteristics
+    if (textLength < 3) {
+      confidence *= 0.8; // Less confident for very short texts
+    } else if (textLength > 20) {
+      confidence *= 1.1; // More confident for longer texts
+      confidence = Math.min(confidence, 0.95);
+    }
+    
+    return {
+      sentiment,
+      score: normalizedScore,
+      confidence: Math.max(0.3, Math.min(confidence, 0.95))
+    };
   };
 
-  const loadHistory = async () => {
-    setIsLoading(true);
+  // RapidAPI Sentiment Analysis function with better error handling
+  const analyzeSentimentAPI = async (text) => {
+    if (!apiKey.trim()) {
+      throw new Error('API key is required');
+    }
+
     try {
-      const response = await fetch(`${API_BASE_URL}/sentiment/history`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setTexts(data.history || []);
-      } else {
-        console.error('Failed to load history:', response.statusText);
+      const response = await fetch(
+        `https://twinword-sentiment-analysis.p.rapidapi.com/analyze/?text=${encodeURIComponent(text)}`,
+        {
+          method: 'GET',
+          headers: {
+            'X-RapidAPI-Key': apiKey.trim(),
+            'X-RapidAPI-Host': 'twinword-sentiment-analysis.p.rapidapi.com'
+          }
+        }
+      );
+
+      if (!response.ok) {
+        if (response.status === 403) {
+          throw new Error('Invalid API key or insufficient permissions');
+        } else if (response.status === 429) {
+          throw new Error('Rate limit exceeded. Try again later.');
+        } else {
+          throw new Error(`API Error: ${response.status} - ${response.statusText}`);
+        }
       }
-    } catch (error) {
-      console.error('Error loading history:', error);
-      // Don't show error for history loading failure
-    } finally {
-      setIsLoading(false);
+
+      const data = await response.json();
+      
+      // Handle API response format
+      return {
+        sentiment: data.type || 'neutral',
+        score: data.score || 0,
+        confidence: Math.abs(data.ratio || 0.5),
+        apiResponse: data
+      };
+    } catch (fetchError) {
+      // If it's a network error, provide more context
+      if (fetchError.name === 'TypeError') {
+        throw new Error('Network error - check your internet connection');
+      }
+      throw fetchError;
     }
   };
 
@@ -74,58 +258,33 @@ const SentimentDashboard = () => {
     setError('');
     
     try {
-      const response = await fetch(`${API_BASE_URL}/sentiment/analyze`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ text: inputText.trim() })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || `Server error: ${response.status}`);
+      let analysis;
+      
+      if (apiKey.trim()) {
+        analysis = await analyzeSentimentAPI(inputText);
+      } else {
+        analysis = analyzeSentimentFallback(inputText);
       }
-
-      const data = await response.json();
       
-      // Add the new analysis to the front of the list
-      setTexts(prevTexts => [data.analysis, ...prevTexts]);
+      const newText = {
+        id: Date.now(), // Better unique ID
+        text: inputText,
+        timestamp: new Date(),
+        ...analysis
+      };
+      
+      setTexts([newText, ...texts]);
       setInputText('');
-      
     } catch (err) {
-      console.error('Analysis error:', err);
-      setError(err.message || 'Failed to analyze sentiment. Please try again.');
+      setError(err.message);
     } finally {
       setIsAnalyzing(false);
     }
   };
 
-  const deleteAnalysis = async (id) => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/sentiment/history/${id}`, {
-        method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (response.ok) {
-        setTexts(prevTexts => prevTexts.filter(text => text.id !== id));
-      } else {
-        console.error('Failed to delete analysis');
-      }
-    } catch (error) {
-      console.error('Error deleting analysis:', error);
-    }
-  };
-
-  const clearAll = async () => {
-    if (window.confirm('Are you sure you want to delete all analyses?')) {
-      // Delete all analyses one by one (since there's no bulk delete endpoint)
-      const deletePromises = texts.map(text => deleteAnalysis(text.id));
-      await Promise.all(deletePromises);
-    }
+  const clearAll = () => {
+    setTexts([]);
+    setError('');
   };
 
   const filteredTexts = texts.filter(text => 
@@ -145,7 +304,7 @@ const SentimentDashboard = () => {
     { name: 'Positive', value: stats.positive, color: '#10B981' },
     { name: 'Neutral', value: stats.neutral, color: '#6B7280' },
     { name: 'Negative', value: stats.negative, color: '#EF4444' }
-  ].filter(item => item.value > 0);
+  ].filter(item => item.value > 0); // Only show non-zero values
 
   const timeSeriesData = texts
     .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
@@ -172,19 +331,6 @@ const SentimentDashboard = () => {
     }
   };
 
-  const getBackendStatusInfo = () => {
-    switch (backendStatus) {
-      case 'connected':
-        return { color: 'bg-green-400', text: 'Backend Connected', icon: '✓' };
-      case 'error':
-        return { color: 'bg-red-400', text: 'Backend Offline', icon: '✗' };
-      default:
-        return { color: 'bg-yellow-400', text: 'Checking...', icon: '⟳' };
-    }
-  };
-
-  const statusInfo = getBackendStatusInfo();
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-6">
       <div className="max-w-7xl mx-auto">
@@ -194,27 +340,50 @@ const SentimentDashboard = () => {
           <p className="text-gray-600">Analyze text sentiment with AI-powered analysis</p>
         </div>
 
-        {/* Backend Status */}
+        {/* API Configuration */}
         <div className="bg-white rounded-xl shadow-lg p-4 mb-6">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-2">
-                <div className={`w-3 h-3 rounded-full ${statusInfo.color}`}></div>
-                <Server className="w-4 h-4 text-gray-600" />
-                <span className="text-sm font-medium">{statusInfo.text}</span>
+                <div className={`w-3 h-3 rounded-full ${apiKey ? 'bg-green-400' : 'bg-orange-400'}`}></div>
+                <span className="text-sm font-medium">
+                  {apiKey ? 'Using RapidAPI (Twinword Sentiment Analysis)' : 'Using Enhanced Demo Mode'}
+                </span>
               </div>
-              <span className="text-xs text-gray-500">
-                API: {API_BASE_URL}
-              </span>
+              {!apiKey && (
+                <button
+                  onClick={() => setShowApiKeyInput(!showApiKeyInput)}
+                  className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800"
+                >
+                  <Settings className="w-4 h-4" />
+                  Setup API
+                </button>
+              )}
             </div>
-            <button
-              onClick={checkBackendHealth}
-              className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800"
-            >
-              <RefreshCw className="w-4 h-4" />
-              Refresh Status
-            </button>
+            {apiKey && (
+              <div className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded">
+                API Key Loaded from Environment
+              </div>
+            )}
           </div>
+          
+          {showApiKeyInput && !apiKey && (
+            <div className="mt-4 p-4 bg-gray-50 rounded-lg">
+              <div className="space-y-3">
+                <div className="text-sm text-gray-700">
+                  <p className="font-medium mb-2">To use RapidAPI:</p>
+                  <ol className="list-decimal list-inside space-y-1 text-xs">
+                    <li>Create a <code className="bg-gray-200 px-1 rounded">.env</code> file in your project root</li>
+                    <li>Add: <code className="bg-gray-200 px-1 rounded">REACT_APP_RAPIDAPI_KEY=your_api_key_here</code></li>
+                    <li>Restart your development server</li>
+                  </ol>
+                  <p className="mt-2 text-xs text-gray-500">
+                    Your API key from RapidAPI: <code className="bg-gray-200 px-1 rounded text-xs">092e68e94bmsh00ba7d06f260e4cp1746b0jsn934a7cb11fec</code>
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Error Display */}
@@ -224,19 +393,6 @@ const SentimentDashboard = () => {
               <AlertCircle className="w-5 h-5 text-red-600" />
               <span className="text-red-700 font-medium">Error:</span>
               <span className="text-red-600">{error}</span>
-            </div>
-          </div>
-        )}
-
-        {/* Backend Offline Warning */}
-        {backendStatus === 'error' && (
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
-            <div className="flex items-center gap-2">
-              <AlertCircle className="w-5 h-5 text-yellow-600" />
-              <span className="text-yellow-700 font-medium">Backend Offline:</span>
-              <span className="text-yellow-600">
-                The backend server is not responding. Please check if the Render service is running.
-              </span>
             </div>
           </div>
         )}
@@ -263,7 +419,7 @@ const SentimentDashboard = () => {
             <div className="flex gap-3">
               <button
                 onClick={handleAnalyze}
-                disabled={!inputText.trim() || isAnalyzing || backendStatus !== 'connected'}
+                disabled={!inputText.trim() || isAnalyzing}
                 className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
                 {isAnalyzing ? <RefreshCw className="w-4 h-4 animate-spin" /> : null}
@@ -277,19 +433,8 @@ const SentimentDashboard = () => {
                   Clear All
                 </button>
               )}
-              <button
-                onClick={loadHistory}
-                disabled={isLoading}
-                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 flex items-center gap-2"
-              >
-                {isLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                Refresh History
-              </button>
             </div>
-            <p className="text-xs text-gray-500">
-              Tip: Press Ctrl+Enter to analyze quickly
-              {backendStatus !== 'connected' && ' (Backend connection required)'}
-            </p>
+            <p className="text-xs text-gray-500">Tip: Press Ctrl+Enter to analyze quickly</p>
           </div>
         </div>
 
@@ -430,44 +575,29 @@ const SentimentDashboard = () => {
           </div>
           
           <div className="space-y-3 max-h-96 overflow-y-auto">
-            {isLoading ? (
-              <div className="flex items-center justify-center py-8">
-                <RefreshCw className="w-6 h-6 animate-spin text-blue-600" />
-                <span className="ml-2 text-gray-600">Loading history...</span>
-              </div>
-            ) : filteredTexts.length > 0 ? (
-              filteredTexts.map((text) => (
-                <div key={text.id} className={`p-4 rounded-lg border ${getSentimentColor(text.sentiment)}`}>
-                  <div className="flex justify-between items-start mb-2">
-                    <div className="flex items-center gap-2">
-                      {getSentimentIcon(text.sentiment)}
-                      <span className="font-semibold capitalize">{text.sentiment}</span>
-                      <span className="text-sm opacity-75">
-                        ({((text.confidence || 0.5) * 100).toFixed(0)}% confidence)
+            {filteredTexts.map((text) => (
+              <div key={text.id} className={`p-4 rounded-lg border ${getSentimentColor(text.sentiment)}`}>
+                <div className="flex justify-between items-start mb-2">
+                  <div className="flex items-center gap-2">
+                    {getSentimentIcon(text.sentiment)}
+                    <span className="font-semibold capitalize">{text.sentiment}</span>
+                    <span className="text-sm opacity-75">
+                      ({(text.confidence * 100).toFixed(0)}% confidence)
+                    </span>
+                    {text.score !== undefined && (
+                      <span className="text-xs opacity-60">
+                        Score: {text.score.toFixed(2)}
                       </span>
-                      {text.score !== undefined && (
-                        <span className="text-xs opacity-60">
-                          Score: {text.score.toFixed(2)}
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs opacity-75">
-                        {new Date(text.timestamp).toLocaleString()}
-                      </span>
-                      <button
-                        onClick={() => deleteAnalysis(text.id)}
-                        className="text-red-500 hover:text-red-700 p-1"
-                        title="Delete analysis"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
+                    )}
                   </div>
-                  <p className="text-gray-800 leading-relaxed">{text.text}</p>
+                  <span className="text-xs opacity-75">
+                    {text.timestamp.toLocaleString()}
+                  </span>
                 </div>
-              ))
-            ) : texts.length === 0 ? (
+                <p className="text-gray-800 leading-relaxed">{text.text}</p>
+              </div>
+            ))}
+            {filteredTexts.length === 0 && texts.length === 0 && (
               <div className="text-center py-12 text-gray-500">
                 <MessageSquare className="w-16 h-16 mx-auto mb-4 opacity-50" />
                 <h4 className="text-lg font-medium mb-2">No analyses yet</h4>
@@ -491,7 +621,8 @@ const SentimentDashboard = () => {
                   ))}
                 </div>
               </div>
-            ) : (
+            )}
+            {filteredTexts.length === 0 && texts.length > 0 && (
               <div className="text-center py-8 text-gray-500">
                 No {filter} sentiment analyses found.
               </div>
