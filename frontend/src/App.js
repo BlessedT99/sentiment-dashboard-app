@@ -8,13 +8,25 @@ const SentimentDashboard = () => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [filter, setFilter] = useState('all');
   const [error, setError] = useState('');
-  const [apiKey] = useState(process.env.REACT_APP_RAPIDAPI_KEY || '');
+  const [apiKey, setApiKey] = useState('092e68e94bmsh00ba7d06f260e4cp1746b0jsn934a7cb11fec'); // Your API key
   const [showApiKeyInput, setShowApiKeyInput] = useState(false);
-  const [useAPI, setUseAPI] = useState(!!process.env.REACT_APP_RAPIDAPI_KEY);
+
+  // Custom function to classify sentiment based on score with neutral threshold
+  const classifySentimentByScore = (score) => {
+    const neutralThreshold = 0.3;
+    
+    if (score >= -neutralThreshold && score <= neutralThreshold) {
+      return 'neutral';
+    } else if (score > neutralThreshold) {
+      return 'positive';
+    } else {
+      return 'negative';
+    }
+  };
 
   // Enhanced fallback sentiment analysis with better neutral detection
   const analyzeSentimentFallback = (text) => {
-    /*// Expanded word lists with intensity scores
+    // Expanded word lists with intensity scores
     const positiveWords = {
       // Strong positive (weight: 2)
       'amazing': 2, 'fantastic': 2, 'excellent': 2, 'outstanding': 2, 'spectacular': 2,
@@ -150,48 +162,24 @@ const SentimentDashboard = () => {
     // Normalize score by text length (avoid bias toward longer texts)
     const normalizedScore = wordCount > 0 ? totalScore / Math.sqrt(wordCount) : 0;
     
-    // Enhanced thresholds based on score and context
-    const strongThreshold = 1.0;
-    const weakThreshold = 0.3;
+    // Use the same neutral threshold as API
+    const sentiment = classifySentimentByScore(normalizedScore);
     
-    // Determine sentiment with improved logic
-    let sentiment, confidence;
-    
-    if (neutralCount > 0 && Math.abs(normalizedScore) < weakThreshold) {
-      // Strong neutral indicators present and weak sentiment
-      sentiment = 'neutral';
+    // Calculate confidence
+    let confidence;
+    if (neutralCount > 0 && Math.abs(normalizedScore) < 0.3) {
       confidence = Math.min(0.7 + neutralDensity, 0.9);
-    } else if (Math.abs(normalizedScore) < weakThreshold) {
-      // Very weak sentiment - likely neutral
-      sentiment = 'neutral';
+    } else if (Math.abs(normalizedScore) < 0.3) {
       confidence = Math.max(0.5, 0.8 - Math.abs(normalizedScore));
-    } else if (normalizedScore >= strongThreshold) {
-      // Strong positive
-      sentiment = 'positive';
-      confidence = Math.min(0.6 + (normalizedScore - strongThreshold) * 0.2 + sentimentDensity, 0.95);
-    } else if (normalizedScore <= -strongThreshold) {
-      // Strong negative
-      sentiment = 'negative';
-      confidence = Math.min(0.6 + (Math.abs(normalizedScore) - strongThreshold) * 0.2 + sentimentDensity, 0.95);
-    } else if (normalizedScore > weakThreshold) {
-      // Mild positive
-      sentiment = 'positive';
-      confidence = Math.min(0.5 + normalizedScore * 0.3 + sentimentDensity, 0.85);
-    } else if (normalizedScore < -weakThreshold) {
-      // Mild negative
-      sentiment = 'negative';
-      confidence = Math.min(0.5 + Math.abs(normalizedScore) * 0.3 + sentimentDensity, 0.85);
     } else {
-      // Default to neutral for borderline cases
-      sentiment = 'neutral';
-      confidence = 0.6;
+      confidence = Math.min(0.6 + Math.abs(normalizedScore) * 0.2 + sentimentDensity, 0.95);
     }
     
     // Adjust confidence based on text characteristics
     if (textLength < 3) {
-      confidence *= 0.8; // Less confident for very short texts
+      confidence *= 0.8;
     } else if (textLength > 20) {
-      confidence *= 1.1; // More confident for longer texts
+      confidence *= 1.1;
       confidence = Math.min(confidence, 0.95);
     }
     
@@ -199,10 +187,10 @@ const SentimentDashboard = () => {
       sentiment,
       score: normalizedScore,
       confidence: Math.max(0.3, Math.min(confidence, 0.95))
-    };*/
+    };
   };
 
-  // RapidAPI Sentiment Analysis function with better error handling
+  // RapidAPI Sentiment Analysis function with custom neutral threshold
   const analyzeSentimentAPI = async (text) => {
     if (!apiKey.trim()) {
       throw new Error('API key is required');
@@ -232,12 +220,20 @@ const SentimentDashboard = () => {
 
       const data = await response.json();
       
-      // Handle API response format
+      // Get the original API response
+      const apiScore = data.score || 0;
+      const originalApiSentiment = data.type || 'neutral';
+      const apiConfidence = Math.abs(data.ratio || 0.5);
+      
+      // Apply custom neutral threshold logic - this is the key part!
+      const customSentiment = classifySentimentByScore(apiScore);
+      
       return {
-        sentiment: data.type || 'neutral',
-        score: data.score || 0,
-        confidence: Math.abs(data.ratio || 0.5),
-        apiResponse: data
+        sentiment: customSentiment,
+        score: apiScore,
+        confidence: apiConfidence,
+        apiResponse: data,
+        originalApiSentiment: originalApiSentiment // Keep track of what the API originally said
       };
     } catch (fetchError) {
       // If it's a network error, provide more context
@@ -267,7 +263,7 @@ const SentimentDashboard = () => {
       }
       
       const newText = {
-        id: Date.now(), // Better unique ID
+        id: Date.now(),
         text: inputText,
         timestamp: new Date(),
         ...analysis
@@ -304,7 +300,7 @@ const SentimentDashboard = () => {
     { name: 'Positive', value: stats.positive, color: '#10B981' },
     { name: 'Neutral', value: stats.neutral, color: '#6B7280' },
     { name: 'Negative', value: stats.negative, color: '#EF4444' }
-  ].filter(item => item.value > 0); // Only show non-zero values
+  ].filter(item => item.value > 0);
 
   const timeSeriesData = texts
     .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
@@ -362,7 +358,7 @@ const SentimentDashboard = () => {
             </div>
             {apiKey && (
               <div className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded">
-                API Key Loaded from Environment
+                API Key Active
               </div>
             )}
           </div>
@@ -370,16 +366,19 @@ const SentimentDashboard = () => {
           {showApiKeyInput && !apiKey && (
             <div className="mt-4 p-4 bg-gray-50 rounded-lg">
               <div className="space-y-3">
+                <input
+                  type="text"
+                  placeholder="Enter RapidAPI Key"
+                  className="w-full p-2 border border-gray-300 rounded"
+                  onChange={(e) => setApiKey(e.target.value)}
+                />
                 <div className="text-sm text-gray-700">
-                  <p className="font-medium mb-2">To use RapidAPI:</p>
+                  <p className="font-medium mb-2">Get your API key from RapidAPI:</p>
                   <ol className="list-decimal list-inside space-y-1 text-xs">
-                    <li>Create a <code className="bg-gray-200 px-1 rounded">.env</code> file in your project root</li>
-                    <li>Add: <code className="bg-gray-200 px-1 rounded">REACT_APP_RAPIDAPI_KEY=your_api_key_here</code></li>
-                    <li>Restart your development server</li>
+                    <li>Visit RapidAPI and subscribe to Twinword Sentiment Analysis</li>
+                    <li>Copy your API key</li>
+                    <li>Paste it above</li>
                   </ol>
-                  <p className="mt-2 text-xs text-gray-500">
-                    Your API key from RapidAPI: <code className="bg-gray-200 px-1 rounded text-xs">092e68e94bmsh00ba7d06f260e4cp1746b0jsn934a7cb11fec</code>
-                  </p>
                 </div>
               </div>
             </div>
@@ -589,6 +588,11 @@ const SentimentDashboard = () => {
                         Score: {text.score.toFixed(2)}
                       </span>
                     )}
+                    {text.originalApiSentiment && text.originalApiSentiment !== text.sentiment && (
+                      <span className="text-xs opacity-50 bg-yellow-100 px-1 rounded">
+                        API: {text.originalApiSentiment}
+                      </span>
+                    )}
                   </div>
                   <span className="text-xs opacity-75">
                     {text.timestamp.toLocaleString()}
@@ -598,33 +602,14 @@ const SentimentDashboard = () => {
               </div>
             ))}
             {filteredTexts.length === 0 && texts.length === 0 && (
-              <div className="text-center py-12 text-gray-500">
-                <MessageSquare className="w-16 h-16 mx-auto mb-4 opacity-50" />
-                <h4 className="text-lg font-medium mb-2">No analyses yet</h4>
-                <p>Start by entering some text above to analyze its sentiment!</p>
-                <p className="text-sm mt-2">Try examples like:</p>
-                <div className="flex flex-wrap gap-2 justify-center mt-2">
-                  {[
-                    "I love this product!",
-                    "This service is terrible.",
-                    "It's okay, nothing special.",
-                    "I feel neutral about this movie.",
-                    "I'm not sure how I feel about this."
-                  ].map((example, i) => (
-                    <button
-                      key={i}
-                      onClick={() => setInputText(example)}
-                      className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded hover:bg-blue-200"
-                    >
-                      "{example}"
-                    </button>
-                  ))}
-                </div>
+              <div className="text-center py-8 text-gray-500">
+                <MessageSquare className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                <p>No analyses yet. Start by entering some text above!</p>
               </div>
             )}
             {filteredTexts.length === 0 && texts.length > 0 && (
               <div className="text-center py-8 text-gray-500">
-                No {filter} sentiment analyses found.
+                <p>No results match the current filter.</p>
               </div>
             )}
           </div>
